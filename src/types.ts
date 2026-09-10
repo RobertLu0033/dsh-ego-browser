@@ -29,7 +29,8 @@ export interface SubprocessHandle {
 /** Structural subset of the dsh-subprocess `SubprocessSpawnSpec`. */
 export interface SpawnSpec {
   argv: readonly string[]
-  cwd?: string
+  /** Required by the DSH subprocess contract; omitting it crashes the provider's validation. */
+  cwd: string
   env?: NodeJS.ProcessEnv
   stdio: {
     stdin: { data: string }

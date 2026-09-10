@@ -358,7 +358,7 @@ type PushConfig = (cfg: ResolvedConfig) => Promise<void>
  * worker is brought back without a host restart. Spawn is rate-limited to
  * avoid hot-looping while a headless container has no browser yet.
  */
-function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegManager: FfmpegInstallationManager | null): EnsureWorker {
+export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegManager: FfmpegInstallationManager | null): EnsureWorker {
   let lastAttempt = 0
   async function launchedWorkerPort(): Promise<number | null> {
     const state = await knownWorkerState()
@@ -381,6 +381,13 @@ function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegManager: F
         const initCfg = JSON.stringify(captureConfig(cfg, ffmpegManager))
         const handle = ctx.subprocess.spawn({
           argv: [process.execPath, WORKER_BIN, initCfg],
+          // cwd is REQUIRED by the DSH subprocess contract (SubprocessSpawnSpec);
+          // the provider's targetEnvironment validates it unconditionally and
+          // crashes on `undefined` ("Cannot read properties of undefined
+          // (reading 'includes')"). Every other spawn in this plugin passes it;
+          // without it the worker never launches and the watch panel shows
+          // "no live agent browser" forever.
+          cwd: process.cwd(),
           stdio: {
             stdin: { data: '' },
             stdout: { maxBytes: 8192 },
@@ -446,10 +453,14 @@ export function initCastServer(
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
   // The web shell exposes `webServer` — the only HTTP host surface the plugin
-  // uses. It is NOT a required inject (TUI / headless hosts have none), so we
-  // resolve it opportunistically via ctx.get('webServer'); if absent here there
-  // is nothing to register, so exit cleanly.
-  const rawServer = (ctx as EgoContext).get?.('webServer') as WebServerLike | undefined
+  // uses. Depending on the DSH/Cordis generation, an injected service is
+  // available either as the typed context property or through `ctx.get()`.
+  // Prefer the property: current strict-inject web profiles populate it on the
+  // child context passed to `ctx.inject(['webServer'], ...)`, while older hosts
+  // only exposed the lookup helper. If neither face exists, this is a tools-only
+  // host and there is nothing to register.
+  const rawServer = ((ctx as EgoContext).webServer
+    ?? (ctx as EgoContext).get?.('webServer')) as WebServerLike | undefined
   if (!rawServer || typeof rawServer.register !== 'function') {
     return
   }
